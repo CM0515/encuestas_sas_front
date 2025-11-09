@@ -15,7 +15,9 @@ import {
   TrendingUp,
   Clock,
   BarChart3,
-  RefreshCw
+  RefreshCw,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import Link from "next/link";
 import { useSurveyResponses } from "@/lib/hooks/usePusher";
@@ -48,6 +50,8 @@ export default function SurveyResultsPage() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [expandedResponses, setExpandedResponses] = useState<Set<string>>(new Set());
+  const [analyticsSource, setAnalyticsSource] = useState<'backend' | 'local'>('local');
 
   useEffect(() => {
     loadData();
@@ -58,10 +62,14 @@ export default function SurveyResultsPage() {
       if (showRefresh) setRefreshing(true);
       else setLoading(true);
 
-      const [surveyResponse, questionsResponse, responsesResponse] = await Promise.all([
+      const [surveyResponse, questionsResponse, responsesResponse, analyticsResponse] = await Promise.all([
         surveysApi.getOne(surveyId),
         questionsApi.getBySurvey(surveyId),
         responsesApi.getBySurvey(surveyId),
+        analyticsApi.getResults(surveyId).catch((err) => {
+          console.warn("Analytics service not available, calculating locally:", err);
+          return null;
+        }),
       ]);
 
       // Manejar diferentes formatos de respuesta
@@ -99,8 +107,16 @@ export default function SurveyResultsPage() {
       console.log("Loaded responses:", responsesArray);
       setResponses(responsesArray);
 
-      // Calcular analytics
-      calculateAnalytics(questionsArray, responsesArray);
+      // Usar analytics del backend si está disponible, sino calcular localmente
+      if (analyticsResponse && analyticsResponse.data) {
+        console.log("📊 Using backend analytics:", analyticsResponse.data);
+        setAnalytics(analyticsResponse.data);
+        setAnalyticsSource('backend');
+      } else {
+        console.log("📊 Calculating analytics locally");
+        calculateAnalytics(questionsArray, responsesArray);
+        setAnalyticsSource('local');
+      }
     } catch (error: any) {
       console.error("Error loading results:", error);
     } finally {
@@ -132,10 +148,28 @@ export default function SurveyResultsPage() {
       questionAnalytics.responses = answers;
 
       // Calcular resumen según el tipo de pregunta
-      if (question.type === QuestionType.MULTIPLE_CHOICE) {
+      if (question.type === QuestionType.MULTIPLE_CHOICE || question.type === QuestionType.YES_NO) {
         const counts: Record<string, number> = {};
         answers.forEach((answer) => {
           counts[answer] = (counts[answer] || 0) + 1;
+        });
+        questionAnalytics.summary = counts;
+      } else if (question.type === QuestionType.MULTIPLE_SELECTION) {
+        // Para selección múltiple, las respuestas pueden ser arrays o strings separados por coma
+        const counts: Record<string, number> = {};
+        answers.forEach((answer) => {
+          let options: string[] = [];
+          if (Array.isArray(answer)) {
+            options = answer;
+          } else if (typeof answer === 'string') {
+            options = answer.split(',').map(opt => opt.trim());
+          }
+
+          options.forEach((option) => {
+            if (option) {
+              counts[option] = (counts[option] || 0) + 1;
+            }
+          });
         });
         questionAnalytics.summary = counts;
       } else if (question.type === QuestionType.SCALE) {
@@ -167,13 +201,39 @@ export default function SurveyResultsPage() {
     try {
       setExporting(true);
 
-      // Crear CSV manualmente
+      // Intentar usar el servicio de exportación del backend
+      try {
+        const exportResponse = await analyticsApi.exportCSV(surveyId);
+
+        // Si el backend devuelve un CSV, descargarlo directamente
+        if (exportResponse && exportResponse.data) {
+          const csvContent = exportResponse.data;
+          const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = `survey-${surveyId}-results-${Date.now()}.csv`;
+          link.click();
+          console.log("✅ CSV exportado desde el backend exitosamente");
+          return;
+        }
+      } catch (backendError) {
+        console.warn("Backend export not available, creating CSV locally:", backendError);
+      }
+
+      // Fallback: Crear CSV manualmente si el backend no está disponible
       const headers = ["Fecha de respuesta", ...questions.map((q) => q.text)];
       const rows = responses.map((response) => {
         console.log("Response createdAt:", response.createdAt);
         const row = [
           new Date(response.createdAt).toLocaleString(),
-          ...questions.map((q) => response.answers?.[q.id] || ""),
+          ...questions.map((q) => {
+            const answer = response.answers?.[q.id];
+            // Manejar respuestas de selección múltiple
+            if (Array.isArray(answer)) {
+              return answer.join('; ');
+            }
+            return answer || "";
+          }),
         ];
         return row;
       });
@@ -190,7 +250,7 @@ export default function SurveyResultsPage() {
       link.download = `survey-${surveyId}-results-${Date.now()}.csv`;
       link.click();
 
-      console.log("✅ CSV exportado exitosamente");
+      console.log("✅ CSV exportado localmente exitosamente");
     } catch (error: any) {
       console.error("Error exporting CSV:", error);
       alert("Error al exportar CSV");
@@ -228,7 +288,14 @@ export default function SurveyResultsPage() {
               </Link>
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">{survey?.title}</h1>
-                <p className="text-sm text-gray-600">Resultados y análisis</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm text-gray-600">Resultados y análisis</p>
+                  {analyticsSource === 'backend' && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                      Analytics del servidor
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
             <div className="flex gap-2">
@@ -329,105 +396,149 @@ export default function SurveyResultsPage() {
                 const questionAnalytics = analytics?.questions?.[question.id];
                 if (!questionAnalytics) return null;
 
+                // Debug: Log analytics data
+                console.log(`Question ${question.id} analytics:`, questionAnalytics);
+
+                // Normalizar datos del backend vs local
+                // El backend usa { data: { counts: {...} } }, local usa { summary: {...} }
+                const normalizedSummary = questionAnalytics.summary ||
+                  (questionAnalytics.data?.counts ? questionAnalytics.data.counts : questionAnalytics.data) ||
+                  {};
+                const normalizedResponses = questionAnalytics.responses ||
+                  (questionAnalytics.data?.answers ? questionAnalytics.data.answers : []);
+                const normalizedCount = questionAnalytics.summary?.count ||
+                  questionAnalytics.data?.count ||
+                  questionAnalytics.totalResponses ||
+                  0;
+
                 return (
                   <Card key={question.id}>
                     <CardHeader>
                       <CardTitle className="text-lg">
                         {index + 1}. {question.text}
                         <span className="ml-2 text-sm font-normal text-gray-500">
-                          ({questionAnalytics.responses.length} respuestas)
+                          ({Array.isArray(normalizedResponses) ? normalizedResponses.length : normalizedCount} respuestas)
                         </span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      {/* Multiple Choice - Bar Chart y Pie Chart */}
-                      {question.type === QuestionType.MULTIPLE_CHOICE && (
-                        <div className="grid md:grid-cols-2 gap-6">
-                          <div>
-                            <h4 className="text-sm font-semibold mb-4">Distribución</h4>
-                            <ResponsiveContainer width="100%" height={300}>
-                              <BarChart
-                                data={Object.entries(questionAnalytics.summary).map(
-                                  ([name, value]) => ({
-                                    name,
-                                    value,
-                                  })
-                                )}
-                              >
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="name" />
-                                <YAxis />
-                                <Tooltip />
-                                <Legend />
-                                <Bar dataKey="value" fill="#8b5cf6" name="Respuestas" />
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-semibold mb-4">Porcentaje</h4>
-                            <ResponsiveContainer width="100%" height={300}>
-                              <PieChart>
-                                <Pie
-                                  data={Object.entries(questionAnalytics.summary).map(
-                                    ([name, value]) => ({
-                                      name,
-                                      value,
-                                    })
-                                  )}
-                                  cx="50%"
-                                  cy="50%"
-                                  labelLine={false}
-                                  label={(entry) =>
-                                    `${entry.name}: ${entry.value} (${(
-                                      (entry.value / questionAnalytics.responses.length) *
-                                      100
-                                    ).toFixed(1)}%)`
+                      {/* Multiple Choice, Yes/No, y Multiple Selection - Bar Chart y Pie Chart */}
+                      {(question.type === QuestionType.MULTIPLE_CHOICE ||
+                        question.type === QuestionType.YES_NO ||
+                        question.type === QuestionType.MULTIPLE_SELECTION) && (
+                        <>
+                          {normalizedSummary && Object.keys(normalizedSummary).length > 0 ? (
+                            <div className="grid md:grid-cols-2 gap-6">
+                              <div>
+                                <h4 className="text-sm font-semibold mb-4">
+                                  Distribución
+                                  {question.type === QuestionType.MULTIPLE_SELECTION &&
+                                    <span className="ml-2 text-xs text-gray-500">(varias respuestas permitidas)</span>
                                   }
-                                  outerRadius={100}
-                                  fill="#8884d8"
-                                  dataKey="value"
-                                >
-                                  {Object.keys(questionAnalytics.summary).map(
-                                    (entry, index) => (
-                                      <Cell
-                                        key={`cell-${index}`}
-                                        fill={COLORS[index % COLORS.length]}
-                                      />
-                                    )
-                                  )}
-                                </Pie>
-                                <Tooltip />
-                              </PieChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </div>
+                                </h4>
+                                <ResponsiveContainer width="100%" height={300}>
+                                  <BarChart
+                                    data={Object.entries(normalizedSummary || {}).map(
+                                      ([name, value]) => ({
+                                        name,
+                                        value,
+                                      })
+                                    )}
+                                  >
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="name" />
+                                    <YAxis />
+                                    <Tooltip />
+                                    <Legend />
+                                    <Bar dataKey="value" fill="#8b5cf6" name="Respuestas" />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </div>
+                              <div>
+                                <h4 className="text-sm font-semibold mb-4">Porcentaje</h4>
+                                <ResponsiveContainer width="100%" height={300}>
+                                  <PieChart>
+                                    <Pie
+                                      data={Object.entries(normalizedSummary || {}).map(
+                                        ([name, value]) => ({
+                                          name,
+                                          value,
+                                        })
+                                      )}
+                                      cx="50%"
+                                      cy="50%"
+                                      labelLine={true}
+                                      label={(entry) => {
+                                        const total = question.type === QuestionType.MULTIPLE_SELECTION
+                                          ? Object.values(normalizedSummary || {}).reduce((a: any, b: any) => a + b, 0)
+                                          : (Array.isArray(normalizedResponses) ? normalizedResponses.length : normalizedCount);
+                                        const percentage = ((entry.value / (total || 1)) * 100).toFixed(1);
+                                        // Solo mostrar etiqueta si el porcentaje es mayor a 5%
+                                        if (parseFloat(percentage) > 5) {
+                                          return `${entry.name}: ${percentage}%`;
+                                        }
+                                        return '';
+                                      }}
+                                      outerRadius={80}
+                                      fill="#8884d8"
+                                      dataKey="value"
+                                    >
+                                      {Object.keys(normalizedSummary || {}).map(
+                                        (_entry, index) => (
+                                          <Cell
+                                            key={`cell-${index}`}
+                                            fill={COLORS[index % COLORS.length]}
+                                          />
+                                        )
+                                      )}
+                                    </Pie>
+                                    <Tooltip
+                                      formatter={(value: any, name: string) => {
+                                        const total = question.type === QuestionType.MULTIPLE_SELECTION
+                                          ? Object.values(normalizedSummary || {}).reduce((a: any, b: any) => a + b, 0)
+                                          : (Array.isArray(normalizedResponses) ? normalizedResponses.length : normalizedCount);
+                                        const percentage = ((value / (total || 1)) * 100).toFixed(1);
+                                        return [`${value} (${percentage}%)`, name];
+                                      }}
+                                    />
+                                    <Legend />
+                                  </PieChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-center py-8 text-gray-500">
+                              No hay respuestas suficientes para mostrar gráficas
+                            </div>
+                          )}
+                        </>
                       )}
 
                       {/* Scale - Stats */}
-                      {question.type === QuestionType.SCALE && (
+                      {question.type === QuestionType.SCALE && normalizedSummary && (
                         <div className="grid md:grid-cols-4 gap-4">
                           <div className="bg-purple-50 p-4 rounded-lg">
                             <p className="text-sm text-gray-600">Promedio</p>
                             <p className="text-2xl font-bold text-purple-600">
-                              {questionAnalytics.summary.average}
+                              {normalizedSummary.average || 0}
                             </p>
                           </div>
                           <div className="bg-blue-50 p-4 rounded-lg">
                             <p className="text-sm text-gray-600">Mínimo</p>
                             <p className="text-2xl font-bold text-blue-600">
-                              {questionAnalytics.summary.min}
+                              {normalizedSummary.min || 0}
                             </p>
                           </div>
                           <div className="bg-green-50 p-4 rounded-lg">
                             <p className="text-sm text-gray-600">Máximo</p>
                             <p className="text-2xl font-bold text-green-600">
-                              {questionAnalytics.summary.max}
+                              {normalizedSummary.max || 0}
                             </p>
                           </div>
                           <div className="bg-orange-50 p-4 rounded-lg">
                             <p className="text-sm text-gray-600">Total</p>
                             <p className="text-2xl font-bold text-orange-600">
-                              {questionAnalytics.summary.count}
+                              {normalizedCount}
                             </p>
                           </div>
                         </div>
@@ -438,13 +549,14 @@ export default function SurveyResultsPage() {
                         question.type === QuestionType.DATE) && (
                           <div>
                             <p className="text-sm font-semibold mb-2">
-                              Ejemplos de respuestas ({questionAnalytics.summary.count} total):
+                              Ejemplos de respuestas ({normalizedCount} total):
                             </p>
                             <ul className="space-y-2">
-                              {questionAnalytics.summary.samples.map(
-                                (sample: string, idx: number) => (
+                              {(Array.isArray(normalizedResponses) ? normalizedResponses : normalizedSummary?.samples || [])
+                                .slice(0, 5)
+                                .map((sample: any, idx: number) => (
                                   <li key={idx} className="bg-gray-50 p-3 rounded border">
-                                    {sample}
+                                    {typeof sample === 'string' ? sample : sample.text || JSON.stringify(sample)}
                                   </li>
                                 )
                               )}
@@ -457,56 +569,106 @@ export default function SurveyResultsPage() {
               })}
             </div>
 
-            {/* Tabla de Respuestas Detalladas */}
+            {/* Respuestas Detalladas - Diseño de Tarjetas */}
             <Card className="mt-8">
               <CardHeader>
-                <CardTitle>Respuestas Detalladas</CardTitle>
+                <CardTitle>Respuestas Detalladas ({responses.length})</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50 border-b">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                          #
-                        </th>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                          Fecha
-                        </th>
-                        {questions.map((q) => (
-                          <th
-                            key={q.id}
-                            className="px-4 py-3 text-left font-semibold text-gray-700"
-                          >
-                            {q.text.length > 30
-                              ? q.text.substring(0, 30) + "..."
-                              : q.text}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {responses.map((response, idx) => (
-                        <tr key={response.id || idx} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-gray-600">{idx + 1}</td>
-                          <td className="px-4 py-3 text-gray-600">
-                            {new Date(response.submittedAt._seconds * 1000).toLocaleDateString("es-ES", {
-                              day: "2-digit",
-                              month: "2-digit",
-                              year: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </td>
-                          {questions.map((q) => (
-                            <td key={q.id} className="px-4 py-3 text-gray-900">
-                              {response.answers?.[q.id] || "-"}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-4">
+                  {responses.map((response, idx) => {
+                    const responseId = response.id || `response-${idx}`;
+                    const isExpanded = expandedResponses.has(responseId);
+
+                    return (
+                      <div
+                        key={responseId}
+                        className="border rounded-lg overflow-hidden hover:shadow-md transition-shadow"
+                      >
+                        {/* Header de la respuesta */}
+                        <div
+                          className="bg-gray-50 px-4 py-3 flex items-center justify-between cursor-pointer"
+                          onClick={() => {
+                            const newExpanded = new Set(expandedResponses);
+                            if (isExpanded) {
+                              newExpanded.delete(responseId);
+                            } else {
+                              newExpanded.add(responseId);
+                            }
+                            setExpandedResponses(newExpanded);
+                          }}
+                        >
+                          <div className="flex items-center gap-4">
+                            <span className="font-semibold text-gray-700">
+                              Respuesta #{idx + 1}
+                            </span>
+                            <span className="text-sm text-gray-600">
+                              {new Date(response.submittedAt._seconds * 1000).toLocaleDateString("es-ES", {
+                                day: "2-digit",
+                                month: "2-digit",
+                                year: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          {isExpanded ? (
+                            <ChevronUp className="w-5 h-5 text-gray-600" />
+                          ) : (
+                            <ChevronDown className="w-5 h-5 text-gray-600" />
+                          )}
+                        </div>
+
+                        {/* Contenido expandible */}
+                        {isExpanded && (
+                          <div className="p-4 bg-white">
+                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                              {questions.map((question, qIdx) => (
+                                <div
+                                  key={question.id}
+                                  className="border rounded-lg p-3 bg-gray-50"
+                                >
+                                  <div className="flex items-start gap-2">
+                                    <span className="flex-shrink-0 w-6 h-6 bg-purple-600 text-white rounded-full flex items-center justify-center text-xs font-bold">
+                                      {qIdx + 1}
+                                    </span>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium text-gray-700 mb-1 line-clamp-2">
+                                        {question.text}
+                                      </p>
+                                      <p className="text-sm text-gray-900 font-semibold break-words">
+                                        {response.answers?.[question.id] || (
+                                          <span className="text-gray-400 italic">Sin respuesta</span>
+                                        )}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Botón para expandir/contraer todo */}
+                <div className="mt-4 flex justify-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setExpandedResponses(new Set(responses.map((r, i) => r.id || `response-${i}`)))}
+                  >
+                    Expandir Todo
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setExpandedResponses(new Set())}
+                  >
+                    Contraer Todo
+                  </Button>
                 </div>
               </CardContent>
             </Card>

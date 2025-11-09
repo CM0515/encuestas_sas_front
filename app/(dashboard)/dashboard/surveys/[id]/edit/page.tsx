@@ -72,14 +72,25 @@ export default function EditSurveyPage() {
       setQuestions(
         questionsArray
           .sort((a: Question, b: Question) => (a.order || 0) - (b.order || 0))
-          .map((q: Question) => ({
-            id: q.id,
-            text: q.text,
-            type: q.type,
-            required: q.required || false,
-            order: q.order || 0,
-            options: q.options || [],
-          }))
+          .map((q: Question) => {
+            const question: any = {
+              id: q.id,
+              text: q.text,
+              type: q.type,
+              required: q.required || false,
+              order: q.order || 0,
+              options: q.options || [],
+            };
+
+            // Solo incluir min y max si la pregunta es de tipo SCALE
+            // Primero intenta desde validation, luego desde la raíz (por compatibilidad)
+            if (q.type === QuestionType.SCALE) {
+              question.min = q.validation?.min ?? q.min ?? 1;
+              question.max = q.validation?.max ?? q.max ?? 5;
+            }
+
+            return question;
+          })
       );
     } catch (error: any) {
       console.error("Error loading survey:", error);
@@ -109,6 +120,19 @@ export default function EditSurveyPage() {
   const updateQuestion = (index: number, field: keyof Question, value: any) => {
     const updated = [...questions];
     updated[index] = { ...updated[index], [field]: value };
+
+    // Si se cambia el tipo de pregunta a SCALE, inicializar min y max
+    if (field === 'type' && value === QuestionType.SCALE) {
+      updated[index].min = updated[index].min ?? 1;
+      updated[index].max = updated[index].max ?? 5;
+    }
+
+    // Si se cambia de SCALE a otro tipo, eliminar min y max
+    if (field === 'type' && value !== QuestionType.SCALE) {
+      delete updated[index].min;
+      delete updated[index].max;
+    }
+
     setQuestions(updated);
   };
 
@@ -168,11 +192,23 @@ export default function EditSurveyPage() {
     // Validar que las preguntas de opción múltiple tengan opciones
     const invalidOptions = questions.some(
       (q) =>
-        q.type === QuestionType.MULTIPLE_CHOICE &&
+        (q.type === QuestionType.MULTIPLE_CHOICE || q.type === QuestionType.MULTIPLE_SELECTION) &&
         (!q.options || q.options.length === 0 || q.options.some((opt) => !opt.trim()))
     );
     if (invalidOptions) {
-      setError("Las preguntas de opción múltiple deben tener al menos una opción válida");
+      setError("Las preguntas de opción múltiple y selección múltiple deben tener al menos una opción válida");
+      setSaving(false);
+      return;
+    }
+
+    // Validar que las preguntas de escala tengan min y max válidos
+    const invalidScale = questions.some(
+      (q) =>
+        q.type === QuestionType.SCALE &&
+        (q.min === undefined || q.max === undefined || q.min >= q.max)
+    );
+    if (invalidScale) {
+      setError("Las preguntas de escala deben tener valores mínimo y máximo válidos (mín < máx)");
       setSaving(false);
       return;
     }
@@ -205,11 +241,19 @@ export default function EditSurveyPage() {
           order: question.order || 0,
         };
 
-        if (question.type === QuestionType.MULTIPLE_CHOICE && question.options && question.options.length > 0) {
+        if ((question.type === QuestionType.MULTIPLE_CHOICE || question.type === QuestionType.MULTIPLE_SELECTION) && question.options && question.options.length > 0) {
           const validOptions = question.options.filter((opt) => opt && opt.trim() !== "");
           if (validOptions.length > 0) {
             questionData.options = validOptions;
           }
+        }
+
+        // Agregar validación con min y max si es una pregunta de escala
+        if (question.type === QuestionType.SCALE && question.min !== undefined && question.max !== undefined) {
+          questionData.validation = {
+            min: question.min,
+            max: question.max,
+          };
         }
 
         console.log(`📝 Actualizando pregunta ${question.id}:`, questionData);
@@ -227,11 +271,19 @@ export default function EditSurveyPage() {
           order: existingQuestions.length + i,
         };
 
-        if (question.type === QuestionType.MULTIPLE_CHOICE && question.options && question.options.length > 0) {
+        if ((question.type === QuestionType.MULTIPLE_CHOICE || question.type === QuestionType.MULTIPLE_SELECTION) && question.options && question.options.length > 0) {
           const validOptions = question.options.filter((opt) => opt && opt.trim() !== "");
           if (validOptions.length > 0) {
             questionData.options = validOptions;
           }
+        }
+
+        // Agregar validación con min y max si es una pregunta de escala
+        if (question.type === QuestionType.SCALE && question.min !== undefined && question.max !== undefined) {
+          questionData.validation = {
+            min: question.min,
+            max: question.max,
+          };
         }
 
         console.log(`📝 Creando nueva pregunta:`, questionData);
@@ -397,13 +449,15 @@ export default function EditSurveyPage() {
                           }
                         >
                           <option value={QuestionType.TEXT}>Texto</option>
-                          <option value={QuestionType.MULTIPLE_CHOICE}>Opción Múltiple</option>
+                          <option value={QuestionType.MULTIPLE_CHOICE}>Opción Múltiple (una respuesta)</option>
+                          <option value={QuestionType.MULTIPLE_SELECTION}>Selección Múltiple (varias respuestas)</option>
+                          <option value={QuestionType.YES_NO}>Sí o No</option>
                           <option value={QuestionType.SCALE}>Escala</option>
                           <option value={QuestionType.DATE}>Fecha</option>
                         </select>
                       </div>
 
-                      {question.type === QuestionType.MULTIPLE_CHOICE && (
+                      {(question.type === QuestionType.MULTIPLE_CHOICE || question.type === QuestionType.MULTIPLE_SELECTION) && (
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-2">
                             Opciones <span className="text-red-500">*</span>
@@ -440,6 +494,42 @@ export default function EditSurveyPage() {
                               <Plus className="w-4 h-4 mr-2" />
                               Agregar Opción
                             </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {question.type === QuestionType.SCALE && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Valor Mínimo <span className="text-red-500">*</span>
+                            </label>
+                            <Input
+                              type="number"
+                              value={question.min ?? 1}
+                              onChange={(e) => updateQuestion(index, "min", parseInt(e.target.value) || 1)}
+                              placeholder="Ej: 1"
+                              min="0"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Valor Máximo <span className="text-red-500">*</span>
+                            </label>
+                            <Input
+                              type="number"
+                              value={question.max ?? 5}
+                              onChange={(e) => updateQuestion(index, "max", parseInt(e.target.value) || 5)}
+                              placeholder="Ej: 5"
+                              min={question.min ?? 1}
+                              required
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-sm text-gray-600">
+                              Los usuarios podrán seleccionar un valor entre {question.min ?? 1} y {question.max ?? 5}
+                            </p>
                           </div>
                         </div>
                       )}

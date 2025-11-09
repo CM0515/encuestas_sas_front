@@ -218,6 +218,73 @@ export default function PublicSurveyPage() {
                     </div>
                   )}
 
+                  {/* Multiple Selection */}
+                  {question.type === QuestionType.MULTIPLE_SELECTION && (
+                    <div className="space-y-3 pl-4">
+                      {question.options?.map((option: string) => (
+                        <label
+                          key={option}
+                          className="flex items-center space-x-3 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
+                        >
+                          <input
+                            type="checkbox"
+                            value={option}
+                            checked={
+                              Array.isArray(answers[question.id])
+                                ? answers[question.id].includes(option)
+                                : false
+                            }
+                            onChange={(e) => {
+                              const currentAnswers = Array.isArray(answers[question.id])
+                                ? answers[question.id]
+                                : [];
+                              if (e.target.checked) {
+                                setAnswers({
+                                  ...answers,
+                                  [question.id]: [...currentAnswers, option],
+                                });
+                              } else {
+                                setAnswers({
+                                  ...answers,
+                                  [question.id]: currentAnswers.filter(
+                                    (a: string) => a !== option
+                                  ),
+                                });
+                              }
+                            }}
+                            className="w-4 h-4 text-purple-600 focus:ring-purple-500 rounded"
+                          />
+                          <span className="text-gray-700">{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Yes/No */}
+                  {question.type === QuestionType.YES_NO && (
+                    <div className="space-y-3 pl-4">
+                      {["Sí", "No"].map((option) => (
+                        <label
+                          key={option}
+                          className="flex items-center space-x-3 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
+                        >
+                          <input
+                            type="radio"
+                            name={question.id}
+                            value={option}
+                            checked={answers[question.id] === option}
+                            onChange={(e) =>
+                              setAnswers({ ...answers, [question.id]: e.target.value })
+                            }
+                            required={question.required}
+                            className="w-4 h-4 text-purple-600 focus:ring-purple-500"
+                          />
+                          <span className="text-gray-700">{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Text */}
                   {question.type === QuestionType.TEXT && (
                     <Input
