@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { surveysApi } from "@/lib/api/surveys";
 import { questionsApi } from "@/lib/api/questions";
@@ -18,8 +18,29 @@ export default function NewSurveyPage() {
   const [description, setDescription] = useState("");
   const [questions, setQuestions] = useState<Array<Partial<Question>>>([]);
   const [error, setError] = useState("");
+  const [lastAddedIndex, setLastAddedIndex] = useState<number | null>(null);
+  const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // Scroll automático cuando se agrega una nueva pregunta
+  useEffect(() => {
+    if (lastAddedIndex !== null && questionRefs.current[lastAddedIndex]) {
+      questionRefs.current[lastAddedIndex]?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+
+      // Enfocar el input de texto de la pregunta
+      setTimeout(() => {
+        const textInput = questionRefs.current[lastAddedIndex]?.querySelector('input[type="text"]') as HTMLInputElement;
+        textInput?.focus();
+      }, 500);
+
+      setLastAddedIndex(null);
+    }
+  }, [lastAddedIndex, questions.length]);
 
   const addQuestion = () => {
+    const newIndex = questions.length;
     setQuestions([
       ...questions,
       {
@@ -30,6 +51,7 @@ export default function NewSurveyPage() {
         options: [],
       },
     ]);
+    setLastAddedIndex(newIndex);
   };
 
   const removeQuestion = (index: number) => {
@@ -260,8 +282,8 @@ export default function NewSurveyPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm border-b">
+    <div className="min-h-screen bg-gray-50 pb-24">
+      <nav className="bg-white shadow-sm border-b sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4">
             <Link href="/dashboard">
@@ -317,12 +339,8 @@ export default function NewSurveyPage() {
           </Card>
 
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader>
               <CardTitle>Preguntas</CardTitle>
-              <Button type="button" onClick={addQuestion} variant="outline" size="sm">
-                <Plus className="w-4 h-4 mr-2" />
-                Agregar Pregunta
-              </Button>
             </CardHeader>
             <CardContent className="space-y-6">
               {questions.length === 0 ? (
@@ -332,8 +350,12 @@ export default function NewSurveyPage() {
                 </div>
               ) : (
                 questions.map((question, index) => (
-                  <Card key={index} className="border-2">
-                    <CardHeader className="pb-3">
+                  <div
+                    key={index}
+                    ref={(el) => { questionRefs.current[index] = el; }}
+                  >
+                    <Card className="border-2">
+                      <CardHeader className="pb-3">
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg">Pregunta {index + 1}</CardTitle>
                         <Button
@@ -472,24 +494,45 @@ export default function NewSurveyPage() {
                       </div>
                     </CardContent>
                   </Card>
+                  </div>
                 ))
               )}
             </CardContent>
           </Card>
-
-          <div className="flex justify-end gap-4">
-            <Link href="/dashboard">
-              <Button type="button" variant="outline">
-                Cancelar
-              </Button>
-            </Link>
-            <Button type="submit" disabled={loading}>
-              <Save className="w-4 h-4 mr-2" />
-              {loading ? "Guardando..." : "Guardar Encuesta"}
-            </Button>
-          </div>
         </form>
       </main>
+
+      {/* Barra de acción fija en la parte inferior */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg z-20">
+        <div className="container mx-auto px-4 py-4 max-w-4xl">
+          <div className="flex justify-between items-center gap-4">
+            <Button
+              type="button"
+              onClick={addQuestion}
+              variant="outline"
+              className="flex-shrink-0"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Agregar Pregunta
+            </Button>
+            <div className="flex gap-4">
+              <Link href="/dashboard">
+                <Button type="button" variant="outline">
+                  Cancelar
+                </Button>
+              </Link>
+              <Button
+                type="submit"
+                disabled={loading}
+                onClick={handleSubmit}
+              >
+                <Save className="w-4 h-4 mr-2" />
+                {loading ? "Guardando..." : "Guardar Encuesta"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

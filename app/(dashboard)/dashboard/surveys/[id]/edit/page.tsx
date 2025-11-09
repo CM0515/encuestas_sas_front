@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { surveysApi } from "@/lib/api/surveys";
 import { questionsApi } from "@/lib/api/questions";
@@ -10,9 +10,11 @@ import { Input } from "@/components/ui/input";
 import { QuestionType, type Question, type Survey } from "@/types";
 import { Plus, Trash2, ArrowLeft, Save } from "lucide-react";
 import Link from "next/link";
+import { useToast } from "@/hooks/use-toast";
 
 export default function EditSurveyPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const params = useParams();
   const surveyId = params.id as string;
 
@@ -23,10 +25,30 @@ export default function EditSurveyPage() {
   const [description, setDescription] = useState("");
   const [questions, setQuestions] = useState<Array<Partial<Question>>>([]);
   const [error, setError] = useState("");
+  const [lastAddedIndex, setLastAddedIndex] = useState<number | null>(null);
+  const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   useEffect(() => {
     loadSurvey();
   }, [surveyId]);
+
+  // Scroll automático cuando se agrega una nueva pregunta
+  useEffect(() => {
+    if (lastAddedIndex !== null && questionRefs.current[lastAddedIndex]) {
+      questionRefs.current[lastAddedIndex]?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+
+      // Enfocar el input de texto de la pregunta
+      setTimeout(() => {
+        const textInput = questionRefs.current[lastAddedIndex]?.querySelector('input[type="text"]') as HTMLInputElement;
+        textInput?.focus();
+      }, 500);
+
+      setLastAddedIndex(null);
+    }
+  }, [lastAddedIndex, questions.length]);
 
   const loadSurvey = async () => {
     try {
@@ -101,6 +123,7 @@ export default function EditSurveyPage() {
   };
 
   const addQuestion = () => {
+    const newIndex = questions.length;
     setQuestions([
       ...questions,
       {
@@ -111,6 +134,7 @@ export default function EditSurveyPage() {
         options: [],
       },
     ]);
+    setLastAddedIndex(newIndex);
   };
 
   const removeQuestion = (index: number) => {
@@ -294,9 +318,13 @@ export default function EditSurveyPage() {
 
       // Recargar los datos
       await loadSurvey();
-      
-      // Mostrar mensaje de éxito (opcional)
-      alert("Encuesta actualizada exitosamente");
+
+      // Mostrar mensaje de éxito
+      toast({
+        title: "¡Éxito!",
+        description: "Encuesta actualizada exitosamente",
+        variant: "success",
+      });
     } catch (error: any) {
       console.error("❌ Error al actualizar encuesta:", error);
       const errorMessage = error?.response?.data?.message;
@@ -336,8 +364,8 @@ export default function EditSurveyPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm border-b">
+    <div className="min-h-screen bg-gray-50 pb-24">
+      <nav className="bg-white shadow-sm border-b sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4">
             <Link href="/dashboard">
@@ -393,12 +421,8 @@ export default function EditSurveyPage() {
           </Card>
 
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader>
               <CardTitle>Preguntas</CardTitle>
-              <Button type="button" onClick={addQuestion} variant="outline" size="sm">
-                <Plus className="w-4 h-4 mr-2" />
-                Agregar Pregunta
-              </Button>
             </CardHeader>
             <CardContent className="space-y-6">
               {questions.length === 0 ? (
@@ -408,8 +432,12 @@ export default function EditSurveyPage() {
                 </div>
               ) : (
                 questions.map((question, index) => (
-                  <Card key={question.id || index} className="border-2">
-                    <CardHeader className="pb-3">
+                  <div
+                    key={question.id || index}
+                    ref={(el) => { questionRefs.current[index] = el; }}
+                  >
+                    <Card className="border-2">
+                      <CardHeader className="pb-3">
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg">Pregunta {index + 1}</CardTitle>
                         <Button
@@ -548,24 +576,45 @@ export default function EditSurveyPage() {
                       </div>
                     </CardContent>
                   </Card>
+                  </div>
                 ))
               )}
             </CardContent>
           </Card>
-
-          <div className="flex justify-end gap-4">
-            <Link href="/dashboard">
-              <Button type="button" variant="outline">
-                Cancelar
-              </Button>
-            </Link>
-            <Button type="submit" disabled={saving}>
-              <Save className="w-4 h-4 mr-2" />
-              {saving ? "Guardando..." : "Guardar Cambios"}
-            </Button>
-          </div>
         </form>
       </main>
+
+      {/* Barra de acción fija en la parte inferior */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg z-20">
+        <div className="container mx-auto px-4 py-4 max-w-4xl">
+          <div className="flex justify-between items-center gap-4">
+            <Button
+              type="button"
+              onClick={addQuestion}
+              variant="outline"
+              className="flex-shrink-0"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Agregar Pregunta
+            </Button>
+            <div className="flex gap-4">
+              <Link href="/dashboard">
+                <Button type="button" variant="outline">
+                  Cancelar
+                </Button>
+              </Link>
+              <Button
+                type="submit"
+                disabled={saving}
+                onClick={handleSubmit}
+              >
+                <Save className="w-4 h-4 mr-2" />
+                {saving ? "Guardando..." : "Guardar Cambios"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -19,11 +19,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
 import { useSurveyUpdates, useSurveyCreated, useSurveyDeleted } from "@/lib/hooks/usePusher";
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [surveys, setSurveys] = useState<any[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -119,7 +121,11 @@ export default function DashboardPage() {
 
     } catch (error: any) {
       console.error("❌ Error al eliminar encuesta:", error);
-      alert(error?.response?.data?.message || "Error al eliminar la encuesta");
+      toast({
+        title: "Error",
+        description: error?.response?.data?.message || "Error al eliminar la encuesta",
+        variant: "destructive",
+      });
     } finally {
       setDeletingSurveyId(null);
     }
@@ -139,7 +145,11 @@ export default function DashboardPage() {
       }, 2000);
     } catch (error) {
       console.error("Error al copiar el link:", error);
-      alert("Error al copiar el link al portapapeles");
+      toast({
+        title: "Error",
+        description: "Error al copiar el link al portapapeles",
+        variant: "destructive",
+      });
     }
   };
 
@@ -160,7 +170,11 @@ export default function DashboardPage() {
       console.log(`✅ Encuesta ${!currentStatus ? "activada" : "desactivada"}`);
     } catch (error: any) {
       console.error("❌ Error al cambiar estado de encuesta:", error);
-      alert(error?.response?.data?.message || "Error al cambiar el estado de la encuesta");
+      toast({
+        title: "Error",
+        description: error?.response?.data?.message || "Error al cambiar el estado de la encuesta",
+        variant: "destructive",
+      });
     } finally {
       setTogglingStatusId(null);
     }

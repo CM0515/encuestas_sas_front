@@ -8,6 +8,7 @@ import { responsesApi } from "@/lib/api/responses";
 import { analyticsApi } from "@/lib/api/analytics";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft,
   Download,
@@ -41,6 +42,7 @@ const COLORS = ["#8b5cf6", "#ec4899", "#10b981", "#f59e0b", "#3b82f6", "#ef4444"
 export default function SurveyResultsPage() {
   const params = useParams();
   const router = useRouter();
+  const { toast } = useToast();
   const surveyId = params.id as string;
 
   const [survey, setSurvey] = useState<any>(null);
@@ -253,7 +255,11 @@ export default function SurveyResultsPage() {
       console.log("✅ CSV exportado localmente exitosamente");
     } catch (error: any) {
       console.error("Error exporting CSV:", error);
-      alert("Error al exportar CSV");
+      toast({
+        title: "Error",
+        description: "Error al exportar CSV",
+        variant: "destructive",
+      });
     } finally {
       setExporting(false);
     }
