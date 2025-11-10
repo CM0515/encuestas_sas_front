@@ -21,6 +21,9 @@ jest.mock('next/navigation', () => ({
   useSearchParams() {
     return new URLSearchParams()
   },
+  useParams() {
+    return {}
+  },
 }))
 
 // Mock Firebase
@@ -78,4 +81,12 @@ jest.mock('recharts', () => ({
   CartesianGrid: () => <div>CartesianGrid</div>,
   Tooltip: () => <div>Tooltip</div>,
   Legend: () => <div>Legend</div>,
+}))
+
+// Mock Pusher hooks
+jest.mock('./lib/hooks/usePusher', () => ({
+  useSurveyUpdates: jest.fn(() => {}),
+  useSurveyCreated: jest.fn(() => {}),
+  useSurveyDeleted: jest.fn(() => {}),
+  useResponseCreated: jest.fn(() => {}),
 }))

@@ -1,6 +1,6 @@
 # Testing Documentation
 
-Este proyecto incluye pruebas unitarias configuradas con Jest y React Testing Library.
+Este proyecto incluye **111 pruebas unitarias** configuradas con Jest y React Testing Library.
 
 ## Configuración
 
@@ -46,7 +46,14 @@ hooks/
 └── use-toast.test.ts
 
 app/(dashboard)/dashboard/surveys/
-└── survey-form.test.tsx
+├── survey-form.test.tsx
+
+app/(auth)/
+├── login/page.test.tsx
+└── register/page.test.tsx
+
+__tests__/pages/
+└── page-rendering.test.tsx
 ```
 
 ## Archivos de Configuración
@@ -65,6 +72,8 @@ Configuración inicial que se ejecuta antes de cada prueba:
 - Mock de Next.js router (`next/navigation`)
 - Mock de Firebase Auth y Firestore
 - Mock de Axios para llamadas API
+- Mock de Pusher para real-time updates
+- Mock de Recharts para visualización de datos
 
 ## Pruebas Existentes
 
@@ -143,6 +152,19 @@ Configuración inicial que se ejecuta antes de cada prueba:
 - ✅ Validación de preguntas de escala (min/max)
 - ✅ Validación de envío de encuesta
 - ✅ Validación de respuestas (requeridas, selección múltiple, escala, yes/no)
+
+### Pruebas de Estructura de Aplicación
+
+#### Page Structure Tests ([__tests__/pages/page-rendering.test.tsx](__tests__/pages/page-rendering.test.tsx))
+- ✅ Estructura de rutas del dashboard
+- ✅ Rutas de encuestas públicas
+- ✅ Rutas de autenticación
+- ✅ Disponibilidad de componentes UI
+- ✅ Configuración de clientes API
+- ✅ Definiciones de tipos (QuestionType, Survey, Question)
+- ✅ Archivos de configuración (Jest, Next.js, TypeScript, Tailwind)
+- ✅ Dependencias de paquetes (testing, UI, utilidades)
+- ✅ Validación de reglas de negocio (título, contraseña, escala, toasts)
 
 ## Escribir Nuevas Pruebas
 
